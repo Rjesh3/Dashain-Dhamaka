@@ -1,0 +1,51 @@
+:root {
+  font-family: 'Noto Sans Devanagari', 'Nirmala UI', Mangal, sans-serif;
+  line-height: 1.6;
+  font-weight: 400;
+  background: #140d14;
+  color: #fffaf4;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color-scheme: dark;
+  --page-bg: #140d14;
+  --page-bg-2: #2a1222;
+  --surface: rgba(32, 20, 26, 0.78);
+  --surface-strong: rgba(255, 248, 236, 0.98);
+  --surface-soft: rgba(255, 244, 219, 0.14);
+  --primary: #b1182b;
+  --primary-strong: #7a0b1c;
+  --gold: #f4bf58;
+  --gold-soft: #f7d474;
+  --amber: #f0b44c;
+  --text: #fffaf4;
+  --text-strong: #1f1011;
+  --text-muted: #f2d9bf;
+  --border: rgba(255, 255, 255, 0.14);
+  --shadow: rgba(12, 8, 18, 0.30);
+  --success: #7ad7a8;
+  --error: #ff8fa1;
+  --radius: 24px;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  min-width: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(202, 77, 52, 0.18), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(255, 201, 96, 0.15), transparent 40%),
+    linear-gradient(180deg, var(--page-bg) 0%, var(--page-bg-2) 100%);
+}
+
+a { color: inherit; text-decoration: none; }
+button, input, textarea { font: inherit; }
+button { cursor: pointer; touch-action: manipulation; }
+button:focus-visible, a:focus-visible {
+  outline: 3px solid #f7d474;
+  outline-offset: 3px;
+}
+#root { min-height: 100vh; min-width: 0; }
