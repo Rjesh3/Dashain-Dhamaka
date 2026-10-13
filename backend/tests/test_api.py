@@ -6,12 +6,18 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.database import Base, engine, init_db
+from app.config import normalize_database_url
 
 Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
 init_db()
 
 client = TestClient(app)
+
+def test_normalize_neon_database_url():
+    assert normalize_database_url("postgresql://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
+    assert normalize_database_url("postgres://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
+    assert normalize_database_url("sqlite:///local.db") == "sqlite:///local.db"
 
 
 def reset_state():
