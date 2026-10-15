@@ -1,13 +1,6 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
-const apiProxy = {
-  '/v1': {
-    target: 'http://localhost:8000',
-    changeOrigin: true,
-  },
-}
-
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -18,10 +11,6 @@ export default defineConfig({
       host: 'localhost',
       port: 5174,
     },
-    proxy: apiProxy,
-  },
-  preview: {
-    proxy: apiProxy,
   },
   test: {
     environment: 'jsdom',

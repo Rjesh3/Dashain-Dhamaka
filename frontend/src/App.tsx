@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { ne, nepaliError } from './i18n/ne'
-import iphoneImage from './assets/iPhone.png'
+import { ne } from './i18n/ne'
 import './App.css'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 const SPIN_ANIMATION_MS = 4800
 const POINTS_PER_SHARE = 1000
-const IPHONE_GOAL_POINTS = 100_000
+const KHASI_GOAL_POINTS = 100_000
+const GAME_STORAGE_KEY = 'dashain-dhamaka-game'
 const WHEEL_COLORS = ['#8f162e', '#d18a1e', '#4f1734', '#b83a2d', '#23634e', '#b97920', '#682448']
 
 type ShareChannel = 'native' | 'whatsapp' | 'facebook' | 'messenger' | 'instagram' | 'copy'
@@ -22,71 +21,43 @@ type Outcome = {
 type GameState = {
   points: number
   spins_used: number
-  spins_remaining: number | null
-  spin_limit: number | null
-  config_version: number
   outcomes: Outcome[]
 }
 
-type SessionResponse = {
-  player: { public_id: string; share_code: string }
-  state: GameState
+type StoredGame = {
+  share_code: string
+  points: number
+  spins_used: number
 }
 
 const defaultState: GameState = {
   points: 0,
   spins_used: 0,
-  spins_remaining: null,
-  spin_limit: null,
-  config_version: 1,
   outcomes: [
-    { id: '10', label: '10', points: 10 },
-    { id: '100', label: '100', points: 100 },
-    { id: '200', label: '200', points: 200 },
-    { id: '500', label: '500', points: 500 },
-    { id: '700', label: '700', points: 700 },
-    { id: '1000', label: '1,000', points: 1000 },
-    { id: '10000', label: '10,000', points: 10000 },
+    { id: '10', label: '10', points: 10, weight: 30 },
+    { id: '100', label: '100', points: 100, weight: 25 },
+    { id: '200', label: '200', points: 200, weight: 20 },
+    { id: '500', label: '500', points: 500, weight: 12 },
+    { id: '700', label: '700', points: 700, weight: 7 },
+    { id: '1000', label: '1,000', points: 1000, weight: 5.6 },
+    { id: '10000', label: '10,000', points: 10000, weight: 0.4 },
   ],
 }
 
-function localizeError(error: unknown): string {
-  if (error instanceof Error && /[\u0900-\u097F]/.test(error.message)) {
-    return error.message
-  }
-  return nepaliError('', error instanceof Error ? error.message : '')
+function createShareCode(): string {
+  return crypto.randomUUID().replaceAll('-', '').slice(0, 8).toUpperCase()
 }
 
-async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const requestUrl = path.startsWith('http') ? path : `${API_BASE}${path}`
-  const response = await fetch(requestUrl, {
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers ?? {}),
-    },
-    ...options,
-  })
+function selectOutcome(outcomes: Outcome[]): Outcome {
+  const totalWeight = outcomes.reduce((sum, outcome) => sum + (outcome.weight ?? 1), 0)
+  let selection = Math.random() * totalWeight
 
-  const text = await response.text()
-  const data = text ? JSON.parse(text) : null
-
-  if (!response.ok) {
-    const errorCode = data?.detail?.code ?? data?.error?.code ?? ''
-    const errorMessage = data?.detail?.message ?? data?.error?.message ?? ''
-    throw new Error(nepaliError(errorCode, errorMessage, response.status))
+  for (const outcome of outcomes) {
+    selection -= outcome.weight ?? 1
+    if (selection < 0) return outcome
   }
 
-  return data as T
-}
-
-function getReferralCode(search: string): string | null {
-  const params = new URLSearchParams(search)
-  const referral = params.get('r')
-  if (!referral) {
-    return null
-  }
-  return referral.trim().toUpperCase()
+  return outcomes[outcomes.length - 1]
 }
 
 function ShareIcon({ channel }: { channel: ShareChannel }) {
@@ -214,7 +185,7 @@ function LandingPage() {
             <div className="landing-phone-glow" aria-hidden="true" />
             <img
               className="landing-phone-image"
-              src={iphoneImage}
+              src="/khasi.png"
               alt={ne.landing.imageAlt}
               fetchPriority="high"
             />
@@ -224,7 +195,6 @@ function LandingPage() {
           <div className="landing-copy">
             <p className="landing-eyebrow">{ne.landing.eyebrowNepali} <span aria-hidden="true">✦</span> {ne.landing.eyebrowEnglish}</p>
             <h1 id="landing-title">
-              <span className="landing-title-english">{ne.landing.headlineEnglish}</span>
               <span className="landing-title-nepali">{ne.landing.headlineNepali}</span>
             </h1>
 
@@ -268,7 +238,6 @@ function LandingPage() {
 }
 
 function HomeScreen() {
-  const location = useLocation()
   const [state, setState] = useState<GameState>(defaultState)
   const [shareCode, setShareCode] = useState('')
   const [isLoading, setIsLoading] = useState(true)
@@ -280,8 +249,8 @@ function HomeScreen() {
   const [modalOpen, setModalOpen] = useState(false)
   const modalCloseRef = useRef<HTMLButtonElement>(null)
   const pointsRef = useRef(0)
-  const pointsStorageKeyRef = useRef('')
-  const remainingGoalPercent = Math.max(0, 100 - Math.floor((state.points / IPHONE_GOAL_POINTS) * 100))
+  const spinsRef = useRef(0)
+  const remainingGoalPercent = Math.max(0, 100 - Math.floor((state.points / KHASI_GOAL_POINTS) * 100))
   const goalProgressPercent = 100 - remainingGoalPercent
 
   const segmentSize = 360 / (state.outcomes.length || 1)
@@ -301,48 +270,36 @@ function HomeScreen() {
     [isSpinning, segmentSize, state.outcomes, wheelRotation],
   )
 
-  const trackEvent = useCallback(async (type: 'share_clicked' | 'link_copied' | 'referral_landing', channel?: string) => {
-    const ref = getReferralCode(location.search)
-    const payload = { type, channel, ref: ref ?? undefined, visit_id: crypto.randomUUID() }
+  const loadGame = useCallback(() => {
     try {
-      await apiRequest('/v1/events', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      })
-    } catch {
-      // Event tracking is best-effort only and should never block gameplay.
-    }
-  }, [location.search])
+      const storedGame = window.localStorage.getItem(GAME_STORAGE_KEY)
+      const game: StoredGame = storedGame
+        ? JSON.parse(storedGame) as StoredGame
+        : { share_code: createShareCode(), points: 0, spins_used: 0 }
 
-  const loadGame = useCallback(async () => {
-    try {
-      const ref = getReferralCode(location.search)
-      const data = await apiRequest<SessionResponse>('/v1/sessions', {
-        method: 'POST',
-        body: JSON.stringify({ locale: 'ne', ref }),
-      })
-      const storageKey = `dashain-dhamaka-points:${data.player.public_id}`
-      const storedPoints = window.localStorage.getItem(storageKey)
-      const points = storedPoints === null ? data.state.points : Number(storedPoints)
-      if (!Number.isSafeInteger(points) || points < 0) {
-        throw new Error('स्थानीय अङ्क लोड गर्न सकिएन।')
+      if (
+        !/^[A-Z0-9]{8}$/.test(game.share_code) ||
+        !Number.isSafeInteger(game.points) ||
+        game.points < 0 ||
+        !Number.isSafeInteger(game.spins_used) ||
+        game.spins_used < 0
+      ) {
+        throw new Error(ne.localGameInvalid)
       }
-      window.localStorage.setItem(storageKey, String(points))
-      pointsRef.current = points
-      pointsStorageKeyRef.current = storageKey
-      setShareCode(data.player.share_code)
-      setState({ ...data.state, points })
+
+      window.localStorage.setItem(GAME_STORAGE_KEY, JSON.stringify(game))
+      pointsRef.current = game.points
+      spinsRef.current = game.spins_used
+      setShareCode(game.share_code)
+      setState({ ...defaultState, points: game.points, spins_used: game.spins_used })
       setError('')
       setNotice('')
-      if (ref) {
-        void trackEvent('referral_landing', 'share')
-      }
     } catch (err) {
-      setError(localizeError(err))
+      setError(err instanceof Error ? err.message : ne.localGameLoadFailed)
     } finally {
       setIsLoading(false)
     }
-  }, [location.search, trackEvent])
+  }, [])
 
   const retryLoadingGame = () => {
     setIsLoading(true)
@@ -352,17 +309,14 @@ function HomeScreen() {
 
   const addPoints = (amount: number) => {
     const nextPoints = pointsRef.current + amount
-    const storageKey = pointsStorageKeyRef.current
-    if (!storageKey) {
-      throw new Error('अङ्क सुरक्षित गर्न सकिएन।')
-    }
-    window.localStorage.setItem(storageKey, String(nextPoints))
+    const nextGame = { share_code: shareCode, points: nextPoints, spins_used: spinsRef.current }
+    window.localStorage.setItem(GAME_STORAGE_KEY, JSON.stringify(nextGame))
     pointsRef.current = nextPoints
     setState((current) => ({ ...current, points: nextPoints }))
   }
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadGame(), 0)
+    const timer = window.setTimeout(loadGame, 0)
     return () => window.clearTimeout(timer)
   }, [loadGame])
 
@@ -408,37 +362,31 @@ function HomeScreen() {
       setIsSpinning(true)
       setError('')
       setNotice('')
-      const key = crypto.randomUUID()
-      const data = await apiRequest<{ spin: { outcome_id: string; points_awarded: number; replayed: boolean }; state: GameState }>(
-        '/v1/spins',
-        {
-          method: 'POST',
-          headers: { 'Idempotency-Key': key },
-          body: '{}',
-        },
-      )
-
-      const outcomeIndex = data.state.outcomes.findIndex((item) => item.id === data.spin.outcome_id)
-      const outcome = data.state.outcomes[outcomeIndex]
-      if (!outcome || outcomeIndex < 0) {
-        throw new Error('स्पिनको नतिजा लोड गर्न सकिएन।')
+      const outcome = selectOutcome(state.outcomes)
+      const outcomeIndex = state.outcomes.findIndex((item) => item.id === outcome.id)
+      const nextGame = {
+        share_code: shareCode,
+        points: pointsRef.current + outcome.points,
+        spins_used: state.spins_used + 1,
       }
+      window.localStorage.setItem(GAME_STORAGE_KEY, JSON.stringify(nextGame))
+      pointsRef.current = nextGame.points
+      spinsRef.current = nextGame.spins_used
+      setState((current) => ({ ...current, points: nextGame.points, spins_used: nextGame.spins_used }))
 
-      addPoints(data.spin.points_awarded)
-      const resultSegmentSize = 360 / data.state.outcomes.length
+      const resultSegmentSize = 360 / state.outcomes.length
       const targetAngle = 360 - (outcomeIndex + 0.5) * resultSegmentSize
       const currentAngle = ((wheelRotation % 360) + 360) % 360
       const alignment = (targetAngle - currentAngle + 360) % 360
       setWheelRotation(wheelRotation + 360 * 6 + alignment)
-      setResult({ label: outcome.label, points: data.spin.points_awarded })
+      setResult({ label: outcome.label, points: outcome.points })
       const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
       await new Promise<void>((resolve) => window.setTimeout(resolve, reduceMotion ? 300 : SPIN_ANIMATION_MS))
-      setState({ ...data.state, points: pointsRef.current })
       setIsSpinning(false)
       setModalOpen(true)
     } catch (err) {
       setIsSpinning(false)
-      setError(localizeError(err))
+      setError(err instanceof Error ? err.message : ne.localGameSaveFailed)
     }
   }
 
@@ -450,7 +398,6 @@ function HomeScreen() {
       try {
         await navigator.clipboard.writeText(shareUrl)
         setNotice(ne.copied)
-        void trackEvent('link_copied', 'copy')
         return
       } catch (err) {
         clipboardError = err
@@ -477,7 +424,6 @@ function HomeScreen() {
     }
 
     setNotice(ne.copied)
-    void trackEvent('link_copied', 'copy')
   }
 
   const share = async (channel: ShareChannel) => {
@@ -499,7 +445,6 @@ function HomeScreen() {
       await navigator.share({ title: 'Dashain Dhamaka', url: shareUrl })
       addPoints(POINTS_PER_SHARE)
       setNotice(ne.sharePointsAwarded)
-      void trackEvent('share_clicked', channel)
       return
     }
 
@@ -512,7 +457,6 @@ function HomeScreen() {
       window.open(urlMap[channel], '_self')
       addPoints(POINTS_PER_SHARE)
       setNotice(ne.sharePointsAwarded)
-      void trackEvent('share_clicked', channel)
     }
   }
 
@@ -522,7 +466,7 @@ function HomeScreen() {
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return
       setNotice('')
-      setError(localizeError(err))
+      setError(err instanceof Error ? err.message : ne.copyFailed)
     }
   }
 
@@ -543,13 +487,13 @@ function HomeScreen() {
             <article className="card share-card">
               <h3>{ne.shareToWin}</h3>
               <div className="share-progress-copy">
-                <img src={iphoneImage} alt={ne.iphoneGoalImageAlt} />
-                <span>{ne.iphoneGoalRemaining.replace('{percent}', String(remainingGoalPercent))}</span>
+                <img src="/khasi.png" alt={ne.khasiGoalImageAlt} />
+                <span>{ne.khasiGoalRemaining.replace('{percent}', String(remainingGoalPercent))}</span>
               </div>
               <div
                 className="share-progress-track"
                 role="progressbar"
-                aria-label={ne.iphoneGoalProgress}
+                aria-label={ne.khasiGoalProgress}
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={goalProgressPercent}
@@ -571,7 +515,7 @@ function HomeScreen() {
                     type="button"
                     className={`share-button share-${channel}`}
                     onClick={() => void handleShare(channel)}
-                    disabled={isLoading}
+                    disabled={isLoading || !!error}
                   >
                     <ShareIcon channel={channel} />
                     <span>{label}</span>
@@ -625,7 +569,7 @@ function HomeScreen() {
               </div>
               <div className="wheel-pointer" aria-hidden="true" />
             </div>
-            <button type="button" className="spin-button" onClick={spin} disabled={isSpinning || isLoading} aria-busy={isSpinning}>
+            <button type="button" className="spin-button" onClick={spin} disabled={isSpinning || isLoading || !!error} aria-busy={isSpinning}>
               {isSpinning ? ne.spinning : ne.spin}
             </button>
             <p className="spin-count">{ne.unlimitedSpins} · {state.spins_used} {ne.spinsPlayed}</p>
