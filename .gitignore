@@ -19,6 +19,7 @@ venv/
 node_modules/
 dist/
 dist-ssr/
+.firebase/
 
 # Local editor and operating-system files
 .vscode/

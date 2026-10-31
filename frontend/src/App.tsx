@@ -1,13 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { trackPageView } from './firebase'
 import { ne } from './i18n/ne'
 import './App.css'
 
 const SPIN_ANIMATION_MS = 4800
 const POINTS_PER_SHARE = 1000
 const KHASI_GOAL_POINTS = 100_000
-const GAME_STORAGE_KEY = 'dashain-dhamaka-game'
+const GAME_STORAGE_KEY = 'tihar-dhamaka-game'
+const LEGACY_STORAGE_KEY = 'dashain-dhamaka-game'
 const WHEEL_COLORS = ['#8f162e', '#d18a1e', '#4f1734', '#b83a2d', '#23634e', '#b97920', '#682448']
+const NATIVE_AD_KEY = '538ef430a79b2ba4c7502484ef28a896'
+const BANNER_KEYS = {
+  wide: 'e6ae4b343d732069b43427ddcab5ad6a',
+  compact: '4d3a10ade04e32db73b856308e0493b7',
+}
+
+type AdOptions = {
+  key: string
+  format: 'iframe'
+  height: number
+  width: number
+  params: Record<string, never>
+}
+
+declare global {
+  interface Window {
+    atOptions?: AdOptions
+  }
+}
 
 type ShareChannel = 'native' | 'whatsapp' | 'facebook' | 'messenger' | 'instagram' | 'copy'
 
@@ -135,6 +156,7 @@ function App() {
 
 function AppRoutes() {
   const location = useLocation()
+  const lastTrackedPage = useRef<string | null>(null)
 
   useEffect(() => {
     const metadata = ne.pageMetadata[location.pathname as keyof typeof ne.pageMetadata] ?? ne.pageMetadata['/']
@@ -142,7 +164,12 @@ function AppRoutes() {
     document.querySelector<HTMLMetaElement>('meta[name="description"]')?.setAttribute('content', metadata.description)
     document.querySelector<HTMLMetaElement>('meta[property="og:title"]')?.setAttribute('content', metadata.title)
     document.querySelector<HTMLMetaElement>('meta[property="og:description"]')?.setAttribute('content', metadata.description)
-  }, [location.pathname])
+    const pagePath = `${location.pathname}${location.search}`
+    if (lastTrackedPage.current !== pagePath) {
+      lastTrackedPage.current = pagePath
+      trackPageView(pagePath, metadata.title)
+    }
+  }, [location.pathname, location.search])
 
   return (
     <Routes>
@@ -153,6 +180,110 @@ function AppRoutes() {
       <Route path="/about" element={<AboutPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+  )
+}
+
+function BannerAd({ size = 'responsive', className = '' }: {
+  size?: 'compact' | 'responsive'
+  className?: string
+}) {
+  const slotRef = useRef<HTMLDivElement>(null)
+  const [isWide, setIsWide] = useState(() => (
+    size === 'responsive' && typeof window !== 'undefined' && (
+      window.matchMedia?.('(min-width: 500px)').matches ?? window.innerWidth >= 500
+    )
+  ))
+
+  useEffect(() => {
+    if (size === 'compact' || typeof window.matchMedia !== 'function') return
+
+    const mediaQuery = window.matchMedia('(min-width: 500px)')
+    if (typeof mediaQuery.addEventListener !== 'function') return
+
+    const updateWidth = (event: MediaQueryListEvent) => setIsWide(event.matches)
+    mediaQuery.addEventListener('change', updateWidth)
+    return () => mediaQuery.removeEventListener('change', updateWidth)
+  }, [size])
+
+  useEffect(() => {
+    const slot = slotRef.current
+    if (!slot) return
+
+    const useWideBanner = size === 'responsive' && isWide
+    const width = useWideBanner ? 468 : 320
+    const height = useWideBanner ? 60 : 50
+    const key = useWideBanner ? BANNER_KEYS.wide : BANNER_KEYS.compact
+    window.atOptions = { key, format: 'iframe', height, width, params: {} }
+
+    const script = document.createElement('script')
+    script.src = `https://www.highrevenueformat.com/${key}/invoke.js`
+    script.async = true
+    script.dataset.cfasync = 'false'
+    script.onerror = () => console.error(`Failed to load advertisement script: ${script.src}`)
+    slot.appendChild(script)
+
+    return () => {
+      script.remove()
+      slot.replaceChildren()
+    }
+  }, [isWide, size])
+
+  return (
+    <aside className={`ad-placement banner-ad-placement ${className}`.trim()} aria-label={ne.advertisement}>
+      <p className="ad-label">{ne.advertisement}</p>
+      <div className="banner-ad-slot" ref={slotRef} />
+    </aside>
+  )
+}
+
+function DesktopBannerAd() {
+  const [isDesktop, setIsDesktop] = useState(() => (
+    typeof window !== 'undefined' && (
+      window.matchMedia?.('(min-width: 1024px)').matches ?? window.innerWidth >= 1024
+    )
+  ))
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+
+    const mediaQuery = window.matchMedia('(min-width: 1024px)')
+    if (typeof mediaQuery.addEventListener !== 'function') return
+
+    const updateWidth = (event: MediaQueryListEvent) => setIsDesktop(event.matches)
+    mediaQuery.addEventListener('change', updateWidth)
+    return () => mediaQuery.removeEventListener('change', updateWidth)
+  }, [])
+
+  return isDesktop ? <BannerAd size="compact" className="desktop-game-ad" /> : null
+}
+
+function NativeAd() {
+  const slotRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const slot = slotRef.current
+    if (!slot) return
+
+    const script = document.createElement('script')
+    script.src = `https://pl31874936.profitableratecpmnetwork.com/${NATIVE_AD_KEY}/invoke.js`
+    script.async = true
+    script.dataset.cfasync = 'false'
+    script.onerror = () => console.error(`Failed to load advertisement script: ${script.src}`)
+    slot.appendChild(script)
+
+    return () => {
+      script.remove()
+      slot.replaceChildren()
+    }
+  }, [])
+
+  return (
+    <aside className="ad-placement native-ad-placement" aria-label={ne.advertisement}>
+      <p className="ad-label">{ne.advertisement}</p>
+      <div ref={slotRef}>
+        <div id={`container-${NATIVE_AD_KEY}`} />
+      </div>
+    </aside>
   )
 }
 
@@ -172,13 +303,15 @@ function LandingPage() {
   return (
     <main className="landing-page">
       <div className="landing-shell">
-        <header className="landing-brand" aria-label="Dashain Dhamaka">
+        <header className="landing-brand" aria-label="Tihar Dhamaka">
           <span className="landing-brand-mark" aria-hidden="true">ध</span>
           <span className="landing-brand-copy">
-            <span className="landing-brand-english">Dashain Dhamaka</span>
+            <span className="landing-brand-english">Tihar Dhamaka</span>
             <span className="landing-brand-nepali">{ne.landing.brandNepali}</span>
           </span>
         </header>
+
+        <BannerAd className="landing-top-ad" />
 
         <section className="landing-hero" aria-labelledby="landing-title">
           <div className="landing-art-column">
@@ -226,12 +359,13 @@ function LandingPage() {
         </section>
 
         <footer className="landing-footer">
-          <span>Dashain Dhamaka <span aria-hidden="true">·</span> {ne.landing.footer}</span>
+          <span>Tihar Dhamaka <span aria-hidden="true">·</span> {ne.landing.footer}</span>
           <nav aria-label={ne.landing.informationLabel}>
             <Link to="/rules"><span>{ne.landing.rulesEnglish}</span><span lang="ne">{ne.rules}</span></Link>
             <Link to="/privacy"><span>{ne.landing.privacyEnglish}</span><span lang="ne">{ne.privacyTitle}</span></Link>
           </nav>
         </footer>
+        <BannerAd className="landing-bottom-ad" />
       </div>
     </main>
   )
@@ -272,7 +406,7 @@ function HomeScreen() {
 
   const loadGame = useCallback(() => {
     try {
-      const storedGame = window.localStorage.getItem(GAME_STORAGE_KEY)
+      const storedGame = window.localStorage.getItem(GAME_STORAGE_KEY) || window.localStorage.getItem(LEGACY_STORAGE_KEY)
       const game: StoredGame = storedGame
         ? JSON.parse(storedGame) as StoredGame
         : { share_code: createShareCode(), points: 0, spins_used: 0 }
@@ -442,7 +576,7 @@ function HomeScreen() {
         return
       }
 
-      await navigator.share({ title: 'Dashain Dhamaka', url: shareUrl })
+      await navigator.share({ title: 'Tihar Dhamaka', url: shareUrl })
       addPoints(POINTS_PER_SHARE)
       setNotice(ne.sharePointsAwarded)
       return
@@ -481,49 +615,54 @@ function HomeScreen() {
         </nav>
       </header>
 
+      <BannerAd size="responsive" className="play-top-ad" />
+
       <main className="layout">
         <section className="hero-card">
           <div className="wheel-panel">
-            <article className="card share-card">
-              <h3>{ne.shareToWin}</h3>
-              <div className="share-progress-copy">
-                <img src="/khasi.png" alt={ne.khasiGoalImageAlt} />
-                <span>{ne.khasiGoalRemaining.replace('{percent}', String(remainingGoalPercent))}</span>
-              </div>
-              <div
-                className="share-progress-track"
-                role="progressbar"
-                aria-label={ne.khasiGoalProgress}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={goalProgressPercent}
-              >
-                <div className="share-progress-value" style={{ width: `${goalProgressPercent}%` }} />
-              </div>
-              <p className="share-points-note">{ne.sharePointsNote}</p>
-              <div className="share-actions">
-                {([
-                  ['native', ne.share],
-                  ['whatsapp', 'WhatsApp'],
-                  ['facebook', 'Facebook'],
-                  ['messenger', 'Messenger'],
-                  ['instagram', 'Instagram DM'],
-                  ['copy', ne.copyLink],
-                ] as const).map(([channel, label]) => (
-                  <button
-                    key={channel}
-                    type="button"
-                    className={`share-button share-${channel}`}
-                    onClick={() => void handleShare(channel)}
-                    disabled={isLoading || !!error}
-                  >
-                    <ShareIcon channel={channel} />
-                    <span>{label}</span>
-                  </button>
-                ))}
-              </div>
-              <p className="share-link">{shareUrl}</p>
-            </article>
+            <div className="game-ad-row share-ad-row">
+              <article className="card share-card">
+                <h3>{ne.shareToWin}</h3>
+                <div className="share-progress-copy">
+                  <img src="/khasi.png" alt={ne.khasiGoalImageAlt} />
+                  <span>{ne.khasiGoalRemaining.replace('{percent}', String(remainingGoalPercent))}</span>
+                </div>
+                <div
+                  className="share-progress-track"
+                  role="progressbar"
+                  aria-label={ne.khasiGoalProgress}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={goalProgressPercent}
+                >
+                  <div className="share-progress-value" style={{ width: `${goalProgressPercent}%` }} />
+                </div>
+                <p className="share-points-note">{ne.sharePointsNote}</p>
+                <div className="share-actions">
+                  {([
+                    ['native', ne.share],
+                    ['whatsapp', 'WhatsApp'],
+                    ['facebook', 'Facebook'],
+                    ['messenger', 'Messenger'],
+                    ['instagram', 'Instagram DM'],
+                    ['copy', ne.copyLink],
+                  ] as const).map(([channel, label]) => (
+                    <button
+                      key={channel}
+                      type="button"
+                      className={`share-button share-${channel}`}
+                      onClick={() => void handleShare(channel)}
+                      disabled={isLoading || !!error}
+                    >
+                      <ShareIcon channel={channel} />
+                      <span>{label}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="share-link">{shareUrl}</p>
+              </article>
+              <DesktopBannerAd />
+            </div>
             <article className="card wallet-card">
               <div className="card-header">
                 <h3>{ne.wallet}</h3>
@@ -546,28 +685,31 @@ function HomeScreen() {
                 </div>
               </div>
             </article>
-            <div className="wheel-frame">
-              <div
-                className="wheel"
-                style={wheelStyle}
-                role="img"
-                aria-label={`${ne.wheel}: ${state.outcomes.map((outcome) => `${outcome.label} ${ne.points}`).join(', ')}`}
-              >
-                {state.outcomes.map((outcome, index) => (
-                  <div
-                    key={outcome.id}
-                    className="wheel-label"
-                    aria-hidden="true"
-                    style={{
-                      transform: `translate(-50%, -50%) rotate(${(index + 0.5) * segmentSize}deg) translateY(-31cqi) rotate(-${(index + 0.5) * segmentSize}deg)`,
-                    }}
-                  >
-                    {outcome.label}
-                  </div>
-                ))}
-                <div className="wheel-hub" aria-hidden="true">ध</div>
+            <div className="game-ad-row wheel-ad-row">
+              <div className="wheel-frame">
+                <div
+                  className="wheel"
+                  style={wheelStyle}
+                  role="img"
+                  aria-label={`${ne.wheel}: ${state.outcomes.map((outcome) => `${outcome.label} ${ne.points}`).join(', ')}`}
+                >
+                  {state.outcomes.map((outcome, index) => (
+                    <div
+                      key={outcome.id}
+                      className="wheel-label"
+                      aria-hidden="true"
+                      style={{
+                        transform: `translate(-50%, -50%) rotate(${(index + 0.5) * segmentSize}deg) translateY(-31cqi) rotate(-${(index + 0.5) * segmentSize}deg)`,
+                      }}
+                    >
+                      {outcome.label}
+                    </div>
+                  ))}
+                  <div className="wheel-hub" aria-hidden="true">ध</div>
+                </div>
+                <div className="wheel-pointer" aria-hidden="true" />
               </div>
-              <div className="wheel-pointer" aria-hidden="true" />
+              <DesktopBannerAd />
             </div>
             <button type="button" className="spin-button" onClick={spin} disabled={isSpinning || isLoading || !!error} aria-busy={isSpinning}>
               {isSpinning ? ne.spinning : ne.spin}
@@ -575,6 +717,8 @@ function HomeScreen() {
             <p className="spin-count">{ne.unlimitedSpins} · {state.spins_used} {ne.spinsPlayed}</p>
           </div>
         </section>
+
+        <BannerAd size="compact" className="game-banner-ad" />
 
         <section id="rules" className="card rules-card">
           <h3>{ne.howToPlay}</h3>
@@ -598,7 +742,7 @@ function HomeScreen() {
         {notice && <p className="status-banner" role="status">{notice}</p>}
       </main>
 
-      <aside className="ad-slot" aria-label={ne.adSlot}>{ne.adSlot}</aside>
+      <NativeAd />
       <SiteFooter />
 
       {modalOpen && result && (
@@ -631,7 +775,7 @@ function RulesPage() {
           <div className="crest">ध</div>
           <div>
             <p className="eyebrow">{ne.rules}</p>
-            <h1>Dashain Dhamaka</h1>
+            <h1>Tihar Dhamaka</h1>
           </div>
         </div>
         <nav className="top-links" aria-label={ne.mainNavigation}>
@@ -640,6 +784,8 @@ function RulesPage() {
           <Link to="/about">{ne.about}</Link>
         </nav>
       </header>
+
+      <BannerAd size="responsive" className="policy-top-ad" />
 
       <main className="policy-card">
         <h2>{ne.rulesTitle}</h2>
@@ -654,6 +800,7 @@ function RulesPage() {
         <p>{ne.randomness}</p>
         <p>{ne.exhausted}</p>
       </main>
+      <NativeAd />
       <SiteFooter />
     </div>
   )
@@ -667,7 +814,7 @@ function PrivacyPage() {
           <div className="crest">ध</div>
           <div>
             <p className="eyebrow">{ne.privacy}</p>
-            <h1>Dashain Dhamaka</h1>
+            <h1>Tihar Dhamaka</h1>
           </div>
         </div>
         <nav className="top-links" aria-label={ne.mainNavigation}>
@@ -677,10 +824,13 @@ function PrivacyPage() {
         </nav>
       </header>
 
+      <BannerAd size="responsive" className="policy-top-ad" />
+
       <main className="policy-card">
         <h2>{ne.privacyTitle}</h2>
         {ne.privacyParagraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
       </main>
+      <NativeAd />
       <SiteFooter />
     </div>
   )
@@ -694,7 +844,7 @@ function AboutPage() {
           <div className="crest">ध</div>
           <div>
             <p className="eyebrow">{ne.about}</p>
-            <h1>Dashain Dhamaka</h1>
+            <h1>Tihar Dhamaka</h1>
           </div>
         </div>
         <nav className="top-links" aria-label={ne.mainNavigation}>
@@ -704,10 +854,13 @@ function AboutPage() {
         </nav>
       </header>
 
+      <BannerAd size="responsive" className="policy-top-ad" />
+
       <main className="policy-card">
         <h2>{ne.aboutTitle}</h2>
         {ne.aboutParagraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
       </main>
+      <NativeAd />
       <SiteFooter />
     </div>
   )
@@ -720,7 +873,7 @@ function SiteFooter() {
         <div className="crest">ध</div>
         <div>
           <p className="eyebrow">{ne.brandEyebrow}</p>
-          <h2>Dashain Dhamaka</h2>
+          <h2>Tihar Dhamaka</h2>
         </div>
       </div>
       <span>{ne.footerTagline}</span>
